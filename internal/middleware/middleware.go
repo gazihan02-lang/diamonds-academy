@@ -65,3 +65,25 @@ func RequireAdmin(sm *scs.SessionManager) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// RequireAccessGate redirects to /access if the user hasn't passed the access gate.
+// Skips admin routes and the access page itself.
+func RequireAccessGate(sm *scs.SessionManager) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Admin users bypass the access gate
+			role := sm.GetString(r.Context(), session.KeyRole)
+			if role == string(auth.RoleAdmin) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Check if access has been granted
+			granted := sm.GetBool(r.Context(), session.KeyAccessGranted)
+			if !granted {
+				http.Redirect(w, r, "/access", http.StatusSeeOther)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

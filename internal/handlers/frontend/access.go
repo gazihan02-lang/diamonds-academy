@@ -1,0 +1,96 @@
+package frontend
+
+import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/alexedwards/scs/v2"
+	"github.com/diamondsacademy/diamonds/internal/access"
+	"github.com/diamondsacademy/diamonds/internal/session"
+	"github.com/diamondsacademy/diamonds/internal/views/pages"
+)
+
+const (
+	maxAccessAttempts     = 5
+	accessLockoutDuration = 30 * time.Second
+)
+
+// AccessHandler handles the access gate page (enter access code).
+type AccessHandler struct {
+	SM        *scs.SessionManager
+	AccessSvc *access.Service
+}
+
+// NewAccessHandler creates a new access gate handler.
+func NewAccessHandler(sm *scs.SessionManager, as *access.Service) *AccessHandler {
+	return &AccessHandler{SM: sm, AccessSvc: as}
+}
+
+// AccessGet renders the access code entry page.
+// If already granted, redirects to /.
+func (h *AccessHandler) AccessGet(w http.ResponseWriter, r *http.Request) {
+	if h.SM.GetBool(r.Context(), session.KeyAccessGranted) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	// Read flash message from session (set by admin on code generation)
+	flash := h.SM.PopString(r.Context(), session.KeyFlash)
+	render(w, r, pages.Access(pages.AccessProps{Flash: flash}))
+}
+
+// AccessPost validates the submitted access code with rate limiting.
+func (h *AccessHandler) AccessPost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// Already granted? Skip.
+	if h.SM.GetBool(r.Context(), session.KeyAccessGranted) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	// Rate limiting: track failed attempts in session
+	attempts := h.SM.GetInt(r.Context(), session.KeyAccessAttempts)
+	if attempts >= maxAccessAttempts {
+		h.SM.Put(r.Context(), session.KeyAccessAttempts, attempts+1)
+		render(w, r, pages.Access(pages.AccessProps{
+			Error: "Çok fazla başarısız deneme. Lütfen 30 saniye bekleyin.",
+		}))
+		return
+	}
+
+	code := r.FormValue("code")
+	// Limit code length to prevent abuse
+	if len(code) > 64 {
+		render(w, r, pages.Access(pages.AccessProps{Error: "Geçersiz erişim kodu."}))
+		return
+	}
+	if code == "" {
+		render(w, r, pages.Access(pages.AccessProps{Error: "Erişim kodu boş bırakılamaz."}))
+		return
+	}
+
+	_, err := h.AccessSvc.Validate(r.Context(), code)
+	if err != nil {
+		// Track failed attempt
+		h.SM.Put(r.Context(), session.KeyAccessAttempts, attempts+1)
+		msg := "Geçersiz veya süresi dolmuş erişim kodu."
+		if !errors.Is(err, access.ErrInvalidCode) {
+			msg = "Beklenmeyen bir hata oluştu."
+		}
+		render(w, r, pages.Access(pages.AccessProps{Error: msg}))
+		return
+	}
+
+	// Reset attempts on success
+	h.SM.Remove(r.Context(), session.KeyAccessAttempts)
+	// Grant access
+	if err := h.SM.RenewToken(r.Context()); err != nil {
+		http.Error(w, "session error", http.StatusInternalServerError)
+		return
+	}
+	h.SM.Put(r.Context(), session.KeyAccessGranted, true)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}

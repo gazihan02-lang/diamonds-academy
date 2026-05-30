@@ -49,6 +49,8 @@ func (h *AuthHandler) LoginPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
+	// Clear any pre-existing access grant from anonymous session
+	h.SM.Remove(r.Context(), session.KeyAccessGranted)
 	h.SM.Put(r.Context(), session.KeyUserID, u.ID)
 	h.SM.Put(r.Context(), session.KeyRole, string(u.Role))
 	h.SM.Put(r.Context(), session.KeyName, u.Name)
@@ -121,6 +123,8 @@ func (h *AuthHandler) RegisterPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
+	// Clear any pre-existing access grant from anonymous session
+	h.SM.Remove(r.Context(), session.KeyAccessGranted)
 	h.SM.Put(r.Context(), session.KeyUserID, u.ID)
 	h.SM.Put(r.Context(), session.KeyRole, string(u.Role))
 	h.SM.Put(r.Context(), session.KeyName, u.Name)

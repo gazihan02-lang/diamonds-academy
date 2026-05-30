@@ -11,8 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/diamondsacademy/diamonds/internal/access"
 	"github.com/diamondsacademy/diamonds/internal/auth"
-	"github.com/diamondsacademy/diamonds/internal/handlers/admin"
+	adm "github.com/diamondsacademy/diamonds/internal/handlers/admin"
 	"github.com/diamondsacademy/diamonds/internal/handlers/api"
 	"github.com/diamondsacademy/diamonds/internal/handlers/frontend"
 	"github.com/diamondsacademy/diamonds/internal/i18n"
@@ -46,7 +47,10 @@ func NewRouter(d Deps) http.Handler {
 
 	front := frontend.New(d.SM, d.DB, d.AuthSvc)
 	authH := frontend.NewAuth(d.SM, d.AuthSvc)
-	adm := admin.New(d.SM, d.DB)
+	adminH := adm.New(d.SM, d.DB)
+	accessSvc := access.NewService(d.DB)
+	accessH := frontend.NewAccessHandler(d.SM, accessSvc)
+	adminAccessH := adm.NewAccessHandler(d.SM, accessSvc)
 
 	// Public (auth gerektirmeyen)
 	web.Get("/login", authH.LoginGet)
@@ -77,27 +81,43 @@ func NewRouter(d Deps) http.Handler {
 	web.Group(func(prot chi.Router) {
 		prot.Use(mw.RequireAuth(d.SM))
 
-	prot.Get("/", front.Dashboard)
-	prot.Get("/profile", front.Profile)
-	prot.Get("/certificate", front.Certificate)
-	prot.Get("/learn/{dayNo}", front.Learn)
-		prot.Post("/api/progress", front.ProgressBeat)
-		prot.Get("/api/progress/{dayNo}", front.ProgressForDay)
-		prot.Post("/api/slot-complete", front.MarkSlot)
-		prot.Post("/api/quiz-submit", front.QuizSubmit)
+		// Access gate page: authenticated users must pass this before content
+		prot.Get("/access", accessH.AccessGet)
+		prot.Post("/access", accessH.AccessPost)
 
-		// Admin: admin rolü zorunlu
+		// Access gate: non-admin users must pass access code check
+		prot.Group(func(gated chi.Router) {
+			gated.Use(mw.RequireAccessGate(d.SM))
+
+			gated.Get("/", front.Dashboard)
+			gated.Get("/certificate", front.Certificate)
+			gated.Get("/learn/{dayNo}", front.Learn)
+			gated.Post("/api/progress", front.ProgressBeat)
+			gated.Get("/api/progress/{dayNo}", front.ProgressForDay)
+			gated.Post("/api/slot-complete", front.MarkSlot)
+			gated.Post("/api/quiz-submit", front.QuizSubmit)
+		})
+
+		// Profile and access page are NOT gated (user needs these without code)
+		prot.Get("/profile", front.Profile)
+
+		// Admin: admin rolü zorunlu (implicitly bypasses access gate via middleware)
 		prot.Route("/admin", func(a chi.Router) {
 			a.Use(mw.RequireAdmin(d.SM))
-			a.Get("/", adm.Index)
-			a.Get("/days", adm.DaysList)
-			a.Get("/days/new", adm.DayNewGet)
-			a.Post("/days/new", adm.DayNewPost)
-			a.Get("/days/{id}/edit", adm.DayEditGet)
-			a.Post("/days/{id}/edit", adm.DayEditPost)
-			a.Post("/days/{id}/delete", adm.DayDelete)
-			a.Post("/days/auto-translate", adm.AutoTranslateQuiz)
-			a.Post("/days/fetch-transcript", adm.FetchTranscript)
+			a.Get("/", adminH.Index)
+			a.Get("/days", adminH.DaysList)
+			a.Get("/days/new", adminH.DayNewGet)
+			a.Post("/days/new", adminH.DayNewPost)
+			a.Get("/days/{id}/edit", adminH.DayEditGet)
+			a.Post("/days/{id}/edit", adminH.DayEditPost)
+			a.Post("/days/{id}/delete", adminH.DayDelete)
+			a.Post("/days/auto-translate", adminH.AutoTranslateQuiz)
+			a.Post("/days/fetch-transcript", adminH.FetchTranscript)
+			// Access code management
+			a.Get("/access", adminAccessH.AccessList)
+			a.Post("/access/generate", adminAccessH.AccessGenerate)
+			a.Post("/access/{id}/deactivate", adminAccessH.AccessDeactivate)
+			a.Post("/access/{id}/activate", adminAccessH.AccessActivate)
 		})
 	})
 

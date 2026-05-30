@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	KeyUserID        = "user_id"
-	KeyRole          = "role"
-	KeyName          = "name"
-	KeyEmail         = "email"
-	KeyAccessGranted = "access_granted"
-	KeyTheme         = "theme"
-	KeyLocale        = "locale"
+	KeyUserID         = "user_id"
+	KeyRole           = "role"
+	KeyName           = "name"
+	KeyEmail          = "email"
+	KeyAccessGranted  = "access_granted"
+	KeyAccessAttempts = "access_attempts"
+	KeyTheme          = "theme"
+	KeyLocale         = "locale"
+	KeyFlash          = "flash"
 )
 
 func New(db *sql.DB, lifetime time.Duration, secure bool) *scs.SessionManager {
